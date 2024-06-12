@@ -1,43 +1,55 @@
 #! -*- coding: utf-8 -*-
-import keras.backend as K
-from keras.models import Model
-from keras.layers import Input, Dense
-from keras.layers import Lambda
-import matplotlib.pyplot as plt
 import tensorflow as tf
+from tensorflow.keras.layers import Input, Dense, Lambda, Layer
+from tensorflow.keras.models import Model
+import tensorflow.keras.backend as K
+import matplotlib.pyplot as plt
 import argparse
 
-#训练数据和测试数据获取
+# 训练数据和测试数据获取
 def load_mnist():
-  #使用keras.datasets载入mnist数据集
-  (train_data, _), (test_data, _) = tf.keras.datasets.mnist.load_data()
-  #调整train_data的数据维度
-  train_data = train_data.reshape((-1, 28 * 28)) / 255.0
-  #调整test_data的数据维度
-  test_data = test_data.reshape((-1, 28 * 28)) / 255.0
+    # 使用keras.datasets载入mnist数据集
+    (train_data, _), (test_data, _) = tf.keras.datasets.mnist.load_data()
+    # 调整train_data的数据维度
+    train_data = train_data.reshape((-1, 28 * 28)) / 255.0
+    # 调整test_data的数据维度
+    test_data = test_data.reshape((-1, 28 * 28)) / 255.0
 
-  return train_data,test_data
+    return train_data, test_data
+
+# 重参数技巧
+def sampling(args):
+    z_mean, z_log_var = args
+    batch_size, latent_dim = K.shape(z_mean)[0], K.int_shape(z_mean)[1]
+    epsilon = K.random_normal(shape=(batch_size, latent_dim))
+    return z_mean + K.exp(z_log_var / 2) * epsilon
+
+# 自定义的VAE模型类
+class VAE(Model):
+    def __init__(self, encoder, decoder, **kwargs):
+        super(VAE, self).__init__(**kwargs)
+        self.encoder = encoder
+        self.decoder = decoder
+
+    def call(self, inputs):
+        z_mean, z_log_var, z = self.encoder(inputs)
+        reconstructed = self.decoder(z)
+        # 计算VAE损失
+        xent_loss = params.input_shape * tf.keras.losses.binary_crossentropy(inputs, reconstructed)
+        kl_loss = -0.5 * tf.reduce_sum(1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var), axis=-1)
+        vae_loss = tf.reduce_mean(xent_loss + kl_loss)
+        self.add_loss(vae_loss)
+        return reconstructed
 
 # 模型搭建
 def build_model(params):
     # 编码器
-    inputs = Input(shape=params.input_shape, name='encoder_input')
+    inputs = Input(shape=(params.input_shape,), name='encoder_input')
     x = Dense(params.intermediate_dim, activation='relu')(inputs)
-
-    # 算p(Z|X)的均值和方差
     z_mean = Dense(params.latent_dim, name='z_mean')(x)
     z_log_var = Dense(params.latent_dim, name='z_log_var')(x)
-
-    # 重参数技巧
-    def sampling(args):
-        z_mean, z_log_var = args
-        batch_size, latent_dim = K.shape(z_mean)[0], K.int_shape(z_mean)[1]
-        epsilon = K.random_normal(shape=(batch_size, latent_dim))
-        return z_mean + K.exp(z_log_var / 2) * epsilon
-
-    # 通过重参数方法随机采样样本z
     z = Lambda(sampling, output_shape=(params.latent_dim,), name='z')([z_mean, z_log_var])
-    encoder = Model(inputs, z, name='encoder')
+    encoder = Model(inputs, [z_mean, z_log_var, z], name='encoder')
 
     # 解码器
     latent_inputs = Input(shape=(params.latent_dim,), name='z_sampling')
@@ -46,27 +58,9 @@ def build_model(params):
     decoder = Model(latent_inputs, outputs, name='decoder')
 
     # VAE
-    outputs = decoder(encoder(inputs))
-    vae = Model(inputs, outputs, name='vae_mlp')
-
-    # 重构loss计算
-    if params.mse:
-        from keras.losses import mse
-        reconstruction_loss = mse(inputs, outputs)
-    else:
-        from keras.losses import binary_crossentropy
-        reconstruction_loss = binary_crossentropy(inputs, outputs)
-    # 重构正确性度量
-    xent_loss = params.input_shape * reconstruction_loss
-    # KL loss计算
-    kl_loss = -0.5 * K.sum(1 + z_log_var - K.square(z_mean) - K.exp(z_log_var), axis=-1)
-    vae_loss = K.mean(xent_loss + kl_loss)
-    vae.add_loss(vae_loss)
-
-    # 定义模型训练优化器
+    vae = VAE(encoder, decoder)
     vae.compile(optimizer='rmsprop')
     return vae
-
 
 # 绘制原始图像和重构图像
 def draw(test_data, decoded_imgs, n, pic_name):
@@ -74,25 +68,20 @@ def draw(test_data, decoded_imgs, n, pic_name):
     for i in range(n):
         # 绘制原始图像
         ax = plt.subplot(2, n, i + 1)
-
         plt.imshow(test_data[i].reshape(28, 28), cmap='Greys')
         plt.title("Image {}".format(i + 1))
-
         ax.get_xaxis().set_visible(False)
         ax.get_yaxis().set_visible(False)
 
         # 绘制重构图像
         ax = plt.subplot(2, n, i + 1 + n)
-
         plt.imshow(decoded_imgs[i].reshape(28, 28), cmap='Greys')
         plt.title("Image {}".format(i + 1 + n))
-
         ax.get_xaxis().set_visible(False)
         ax.get_yaxis().set_visible(False)
 
     # 绘制到图片文件'vae.png'
     plt.savefig('{}'.format(pic_name))
-
 
 def main(params):
     # 数据获取
@@ -112,7 +101,6 @@ def main(params):
     n = 5
     # 绘制结果
     draw(x_test, decoded, n, 'vae.png')
-
 
 # 主函数
 if __name__ == '__main__':
